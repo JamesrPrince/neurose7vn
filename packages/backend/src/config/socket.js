@@ -1,36 +1,61 @@
+const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { Server } = require('socket.io');
-const { Message, User } = require("../models");
+const { User, Message } = require('../models');
 
-const initializeSocket = (server) => {
-  const io = new Server(server, {
+/**
+ * Initialize Socket.IO server for real-time communication
+ * @param {Object} server - HTTP server instance
+ * @returns {Object} - Socket.IO instance
+ */
+exports.initializeSocket = (server) => {
+  const io = socketIo(server, {
     cors: {
-      origin: process.env.FRONTEND_URL,
+      origin: process.env.FRONTEND_URL || '*',
       methods: ['GET', 'POST'],
       credentials: true
     }
   });
 
   // Socket authentication middleware
-  io.use((socket, next) => {
-    const token = socket.handshake.auth.token;
-    if (!token) {
-      return next(new Error('Authentication error'));
-    }
-
+  io.use(async (socket, next) => {
     try {
+      const token = socket.handshake.auth.token;
+      
+      if (!token) {
+        return next(new Error('Authentication error: Token required'));
+      }
+      
+      // Verify JWT token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      socket.user = decoded;
+      
+      // Check if user exists
+      const user = await User.findByPk(decoded.id);
+      if (!user) {
+        return next(new Error('Authentication error: User not found'));
+      }
+      
+      // Attach user data to socket
+      socket.user = {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      };
+      
       next();
-    } catch (err) {
-      next(new Error('Authentication error'));
+    } catch (error) {
+      return next(new Error('Authentication error: Invalid token'));
     }
   });
 
   // Store active connections
   const userSockets = new Map();
 
+  // Handle connection
   io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.user.id}`);
+    
     const userId = socket.user.id;
     
     // Store user's socket connection
@@ -39,9 +64,26 @@ const initializeSocket = (server) => {
     }
     userSockets.get(userId).add(socket.id);
 
-    // Handle private messages
-    socket.on('private-message', async ({ content, receiverId, projectId, attachments = [] }) => {
+    // Join a private room based on user ID for direct messages
+    socket.join(`user-${socket.user.id}`);
+    
+    // Event to join a specific conversation room
+    socket.on('join-conversation', (conversationId) => {
+      socket.join(`conversation-${conversationId}`);
+      console.log(`${socket.user.id} joined conversation ${conversationId}`);
+    });
+    
+    // Event to leave a specific conversation room
+    socket.on('leave-conversation', (conversationId) => {
+      socket.leave(`conversation-${conversationId}`);
+      console.log(`${socket.user.id} left conversation ${conversationId}`);
+    });
+    
+    // Event to send a message
+    socket.on('send-message', async (messageData) => {
       try {
+        const { receiverId, content, projectId, attachments = [] } = messageData;
+        
         // Create message in database
         const message = await Message.create({
           senderId: userId,
@@ -89,18 +131,19 @@ const initializeSocket = (server) => {
             });
           });
         }
-      } catch (err) {
+      } catch (error) {
+        console.error('Error sending message:', error);
         socket.emit('error', { message: 'Failed to send message' });
       }
     });
-
-    // Handle typing indicators
-    socket.on('typing', ({ receiverId, projectId }) => {
-      if (userSockets.has(receiverId)) {
-        userSockets.get(receiverId).forEach(socketId => {
-          io.to(socketId).emit('user-typing', { userId, projectId });
-        });
-      }
+    
+    // Event for typing indicator
+    socket.on('typing', ({ receiverId, projectId, isTyping }) => {
+      io.to(`user-${receiverId}`).emit('typing-indicator', {
+        senderId: socket.user.id,
+        projectId,
+        isTyping
+      });
     });
 
     // Handle message read status
@@ -125,6 +168,7 @@ const initializeSocket = (server) => {
 
     // Handle disconnection
     socket.on('disconnect', () => {
+      console.log(`User disconnected: ${socket.user.id}`);
       if (userSockets.has(userId)) {
         const userSocketSet = userSockets.get(userId);
         userSocketSet.delete(socket.id);
@@ -137,5 +181,3 @@ const initializeSocket = (server) => {
 
   return io;
 };
-
-module.exports = initializeSocket;

@@ -1,262 +1,305 @@
-const { Message, User, Project } = require("../models");
-const { Op } = require("sequelize");
+const { Message, User, Project } = require('../models');
+const { Op } = require('sequelize');
 
-// Send a message
-exports.sendMessage = async (req, res) => {
+/**
+ * Get all messages between current user and another user
+ */
+exports.getConversation = async (req, res, next) => {
   try {
-    const { content, receiverId, projectId } = req.body;
-    const senderId = req.user.id;
+    const { userId } = req.params;
+    const currentUserId = req.user.id;
+    const { projectId } = req.query;
+    
+    // Validate if user exists
+    const otherUser = await User.findByPk(userId);
+    if (!otherUser) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User not found'
+      });
+    }
+    
+    // Build query conditions
+    const whereConditions = {
+      [Op.or]: [
+        { senderId: currentUserId, receiverId: userId },
+        { senderId: userId, receiverId: currentUserId }
+      ]
+    };
+    
+    // Add project filter if provided
+    if (projectId) {
+      whereConditions.projectId = projectId;
+    }
+    
+    // Get messages
+    const messages = await Message.findAll({
+      where: whereConditions,
+      order: [['createdAt', 'ASC']],
+      include: [
+        {
+          model: User,
+          as: 'sender',
+          attributes: ['id', 'firstName', 'lastName', 'email', 'profileImage']
+        },
+        {
+          model: User,
+          as: 'receiver',
+          attributes: ['id', 'firstName', 'lastName', 'email', 'profileImage']
+        },
+        {
+          model: Project,
+          as: 'project',
+          attributes: ['id', 'title'],
+          required: false
+        }
+      ]
+    });
+    
+    // Mark unread messages as read
+    const unreadMessages = messages.filter(
+      msg => !msg.isRead && msg.receiverId === currentUserId
+    );
+    
+    if (unreadMessages.length > 0) {
+      await Message.update(
+        { isRead: true, readAt: new Date() },
+        {
+          where: {
+            id: { [Op.in]: unreadMessages.map(msg => msg.id) }
+          }
+        }
+      );
+    }
+    
+    res.status(200).json({
+      status: 'success',
+      data: { messages }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
+/**
+ * Send a message to another user
+ */
+exports.sendMessage = async (req, res, next) => {
+  try {
+    const { receiverId, content, projectId } = req.body;
+    const senderId = req.user.id;
+    
+    // Validate if receiver exists
+    const receiver = await User.findByPk(receiverId);
+    if (!receiver) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Recipient not found'
+      });
+    }
+    
+    // Validate project if provided
+    if (projectId) {
+      const project = await Project.findByPk(projectId);
+      if (!project) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Project not found'
+        });
+      }
+    }
+    
+    // Create attachments array if files were uploaded
+    const attachments = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        attachments.push(`/uploads/messages/${file.filename}`);
+      });
+    }
+    
+    // Create message
     const message = await Message.create({
-      content,
       senderId,
       receiverId,
       projectId,
+      content,
+      attachments,
+      isRead: false
     });
-
-    return res.status(201).json(message);
-  } catch (error) {
-    console.error("Error sending message:", error);
-    return res.status(500).json({ error: "Failed to send message" });
-  }
-};
-
-// Get conversation between two users for a specific project
-exports.getConversation = async (req, res) => {
-  try {
-    const { projectId, otherUserId } = req.params;
-    const userId = req.user.id;
-
-    // Verify that both users are involved in the project
-    const project = await Project.findByPk(projectId);
-    if (!project) {
-      return res.status(404).json({
-        status: "error",
-        message: "Project not found",
-      });
-    }
-
-    const isInvolved =
-      project.clientId === userId ||
-      project.assignedToId === userId ||
-      project.clientId === otherUserId ||
-      project.assignedToId === otherUserId;
-
-    if (!isInvolved) {
-      return res.status(403).json({
-        status: "error",
-        message: "You do not have access to this conversation",
-      });
-    }
-
-    // Get messages between the two users for the project
-    const messages = await Message.findAll({
-      where: {
-        projectId,
-        [Op.or]: [
-          {
-            senderId: userId,
-            receiverId: otherUserId,
-          },
-          {
-            senderId: otherUserId,
-            receiverId: userId,
-          },
-        ],
-      },
+    
+    // Get message with associations
+    const messageWithDetails = await Message.findByPk(message.id, {
       include: [
         {
           model: User,
-          as: "sender",
-          attributes: [
-            "id",
-            "username",
-            "firstName",
-            "lastName",
-            "profileImage",
-          ],
+          as: 'sender',
+          attributes: ['id', 'firstName', 'lastName', 'email', 'profileImage']
         },
         {
           model: User,
-          as: "receiver",
-          attributes: [
-            "id",
-            "username",
-            "firstName",
-            "lastName",
-            "profileImage",
-          ],
+          as: 'receiver',
+          attributes: ['id', 'firstName', 'lastName', 'email', 'profileImage']
         },
-      ],
-      order: [["createdAt", "ASC"]],
-    });
-
-    // Mark unread messages as read
-    await Message.update(
-      { isRead: true },
-      {
-        where: {
-          projectId,
-          senderId: otherUserId,
-          receiverId: userId,
-          isRead: false,
-        },
-      }
-    );
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        messages,
-      },
-    });
-  } catch (error) {
-    console.error("Error getting conversation:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to get conversation",
-    });
-  }
-};
-
-// Get all conversations for a user
-exports.getConversations = async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    // Get the latest message from each conversation
-    const conversations = await Message.findAll({
-      attributes: [
-        "projectId",
-        [
-          sequelize.fn("MAX", sequelize.col("Message.createdAt")),
-          "lastMessageDate",
-        ],
-      ],
-      where: {
-        [Op.or]: [{ senderId: userId }, { receiverId: userId }],
-      },
-      group: ["projectId", "Project.id", "sender.id", "receiver.id"],
-      include: [
         {
           model: Project,
-          attributes: ["id", "title", "status"],
-          required: true,
-        },
-        {
-          model: User,
-          as: "sender",
-          attributes: [
-            "id",
-            "username",
-            "firstName",
-            "lastName",
-            "profileImage",
-          ],
-        },
-        {
-          model: User,
-          as: "receiver",
-          attributes: [
-            "id",
-            "username",
-            "firstName",
-            "lastName",
-            "profileImage",
-          ],
-        },
-      ],
-      order: [
-        [sequelize.fn("MAX", sequelize.col("Message.createdAt")), "DESC"],
-      ],
+          as: 'project',
+          attributes: ['id', 'title'],
+          required: false
+        }
+      ]
     });
+    
+    res.status(201).json({
+      status: 'success',
+      message: 'Message sent successfully',
+      data: { message: messageWithDetails }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
-    // Get unread message counts for each conversation
-    const unreadCounts = await Message.findAll({
+/**
+ * Get all conversations for the current user
+ */
+exports.getConversations = async (req, res, next) => {
+  try {
+    const currentUserId = req.user.id;
+    
+    // Get all unique users that current user has messaged with
+    const conversations = await Message.findAll({
+      where: {
+        [Op.or]: [
+          { senderId: currentUserId },
+          { receiverId: currentUserId }
+        ]
+      },
       attributes: [
-        "projectId",
-        [sequelize.fn("COUNT", sequelize.col("id")), "unreadCount"],
+        [sequelize.fn('DISTINCT', 
+          sequelize.fn('CASE', 
+            sequelize.literal(`WHEN "senderId" = '${currentUserId}' THEN "receiverId" ELSE "senderId" END`)), 
+        'userId']
       ],
-      where: {
-        receiverId: userId,
-        isRead: false,
-      },
-      group: ["projectId"],
+      raw: true
     });
-
-    // Combine the data
-    const conversationsWithMeta = conversations.map((conversation) => {
-      const unreadCount = unreadCounts.find(
-        (count) => count.projectId === conversation.projectId
-      );
-
-      return {
-        ...conversation.toJSON(),
-        unreadCount: unreadCount ? parseInt(unreadCount.get("unreadCount")) : 0,
-      };
-    });
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        conversations: conversationsWithMeta,
-      },
-    });
-  } catch (error) {
-    console.error("Error getting conversations:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to get conversations",
-    });
-  }
-};
-
-// Mark messages as read
-exports.markAsRead = async (req, res) => {
-  try {
-    const { projectId, otherUserId } = req.params;
-    const userId = req.user.id;
-
-    await Message.update(
-      { isRead: true },
-      {
-        where: {
-          projectId,
-          senderId: otherUserId,
-          receiverId: userId,
-          isRead: false,
-        },
-      }
+    
+    // Get user details and last message for each conversation
+    const conversationDetails = await Promise.all(
+      conversations.map(async (conv) => {
+        const userId = conv.userId;
+        
+        // Get user details
+        const user = await User.findByPk(userId, {
+          attributes: ['id', 'firstName', 'lastName', 'email', 'profileImage']
+        });
+        
+        // Get last message
+        const lastMessage = await Message.findOne({
+          where: {
+            [Op.or]: [
+              { senderId: currentUserId, receiverId: userId },
+              { senderId: userId, receiverId: currentUserId }
+            ]
+          },
+          order: [['createdAt', 'DESC']],
+          include: [
+            {
+              model: Project,
+              as: 'project',
+              attributes: ['id', 'title'],
+              required: false
+            }
+          ]
+        });
+        
+        // Get unread count
+        const unreadCount = await Message.count({
+          where: {
+            senderId: userId,
+            receiverId: currentUserId,
+            isRead: false
+          }
+        });
+        
+        return {
+          user,
+          lastMessage,
+          unreadCount
+        };
+      })
     );
-
+    
     res.status(200).json({
-      status: "success",
-      message: "Messages marked as read",
+      status: 'success',
+      data: { conversations: conversationDetails }
     });
   } catch (error) {
-    console.error("Error marking messages as read:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to mark messages as read",
-    });
+    next(error);
   }
 };
 
-// Get unread message count
-exports.getUnreadCount = async (req, res) => {
+/**
+ * Mark message as read
+ */
+exports.markAsRead = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-
-    const count = await Message.count({
-      where: {
-        receiverId: userId,
-        isRead: false,
-      },
+    const { messageId } = req.params;
+    const currentUserId = req.user.id;
+    
+    // Find the message
+    const message = await Message.findByPk(messageId);
+    
+    if (!message) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Message not found'
+      });
+    }
+    
+    // Check if user is the receiver
+    if (message.receiverId !== currentUserId) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Not authorized to mark this message as read'
+      });
+    }
+    
+    // Update message
+    if (!message.isRead) {
+      message.isRead = true;
+      message.readAt = new Date();
+      await message.save();
+    }
+    
+    res.status(200).json({
+      status: 'success',
+      message: 'Message marked as read'
     });
-
-    return res.json({ count });
   } catch (error) {
-    console.error("Error fetching unread count:", error);
-    return res.status(500).json({ error: "Failed to fetch unread count" });
+    next(error);
+  }
+};
+
+/**
+ * Get unread message count
+ */
+exports.getUnreadCount = async (req, res, next) => {
+  try {
+    const currentUserId = req.user.id;
+    
+    // Count unread messages
+    const unreadCount = await Message.count({
+      where: {
+        receiverId: currentUserId,
+        isRead: false
+      }
+    });
+    
+    res.status(200).json({
+      status: 'success',
+      data: { unreadCount }
+    });
+  } catch (error) {
+    next(error);
   }
 };

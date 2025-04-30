@@ -1,4 +1,6 @@
-module.exports = (sequelize, DataTypes) => {
+const { DataTypes } = require("sequelize");
+
+module.exports = (sequelize) => {
   const Message = sequelize.define(
     "Message",
     {
@@ -6,21 +8,6 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
-      },
-      content: {
-        type: DataTypes.TEXT,
-        allowNull: false,
-        validate: {
-          notEmpty: true,
-        },
-      },
-      attachments: {
-        type: DataTypes.ARRAY(DataTypes.STRING),
-        defaultValue: [],
-      },
-      isRead: {
-        type: DataTypes.BOOLEAN,
-        defaultValue: false,
       },
       senderId: {
         type: DataTypes.UUID,
@@ -40,30 +27,54 @@ module.exports = (sequelize, DataTypes) => {
       },
       projectId: {
         type: DataTypes.UUID,
-        allowNull: false,
+        allowNull: true,
         references: {
           model: "Projects",
           key: "id",
         },
       },
+      content: {
+        type: DataTypes.TEXT,
+        allowNull: false,
+      },
+      attachments: {
+        type: DataTypes.ARRAY(DataTypes.STRING),
+        defaultValue: [],
+      },
+      isRead: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+      },
+      readAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
     },
     {
-      tableName: "Messages",
       timestamps: true,
+      hooks: {
+        beforeUpdate: (message) => {
+          if (message.changed("isRead") && message.isRead) {
+            message.readAt = new Date();
+          }
+        },
+      },
     }
   );
 
+  // Define associations
   Message.associate = (models) => {
     Message.belongsTo(models.User, {
-      as: "sender",
       foreignKey: "senderId",
+      as: "sender",
     });
     Message.belongsTo(models.User, {
-      as: "receiver",
       foreignKey: "receiverId",
+      as: "receiver",
     });
     Message.belongsTo(models.Project, {
       foreignKey: "projectId",
+      as: "project",
     });
   };
 

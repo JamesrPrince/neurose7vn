@@ -1,4 +1,4 @@
-# TechFreelance Platform
+# NeuroSe7vn
 
 A comprehensive platform for connecting freelance tech professionals with clients.
 
