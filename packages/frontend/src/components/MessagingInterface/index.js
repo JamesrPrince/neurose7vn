@@ -1,237 +1,133 @@
 import React, { useState, useEffect, useRef } from "react";
 import styled from "@emotion/styled";
-import axios from "axios";
-import io from "socket.io-client";
+import { io } from "socket.io-client";
 import { useAuth } from "../../context/AuthContext";
 
 const Container = styled.div`
   display: flex;
   flex-direction: column;
-  height: 500px;
-  border: 1px solid #ddd;
+  height: 100%;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background-color: white;
+  background: white;
 `;
 
-const MessagesContainer = styled.div`
+const MessageList = styled.div`
   flex: 1;
-  padding: 1rem;
   overflow-y: auto;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-
-  /* Custom scrollbar */
-  &::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: #f1f1f1;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 3px;
-  }
-
-  &::-webkit-scrollbar-thumb:hover {
-    background: #666;
-  }
 `;
 
 const Message = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: ${(props) => (props.isSent ? "flex-end" : "flex-start")};
   max-width: 70%;
+  align-self: ${(props) => (props.isSent ? "flex-end" : "flex-start")};
+`;
+
+const MessageContent = styled.div`
+  background: ${(props) =>
+    props.isSent ? "var(--primary)" : "var(--background)"};
+  color: ${(props) => (props.isSent ? "white" : "inherit")};
   padding: 0.75rem 1rem;
-  border-radius: 12px;
-  position: relative;
-  word-wrap: break-word;
+  border-radius: 1rem;
+  border-bottom-${(props) => (props.isSent ? "right" : "left")}-radius: 0;
+`;
 
-  ${(props) =>
-    props.isSender
-      ? `
-    align-self: flex-end;
-    background-color: #0070f3;
-    color: white;
-    border-bottom-right-radius: 4px;
-  `
-      : `
-    align-self: flex-start;
-    background-color: #f0f0f0;
-    color: #333;
-    border-bottom-left-radius: 4px;
-  `}
-
-  .meta {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
-    opacity: 0.8;
-  }
-
-  .attachments {
-    margin-top: 0.5rem;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-
-    a {
-      padding: 0.25rem 0.5rem;
-      background-color: rgba(255, 255, 255, 0.2);
-      border-radius: 4px;
-      font-size: 0.875rem;
-      color: ${(props) => (props.isSender ? "white" : "#0070f3")};
-      text-decoration: none;
-
-      &:hover {
-        background-color: rgba(255, 255, 255, 0.3);
-      }
-    }
-  }
+const MessageMeta = styled.div`
+  font-size: 0.75rem;
+  color: var(--secondary);
+  margin-top: 0.25rem;
 `;
 
 const InputContainer = styled.div`
+  border-top: 1px solid var(--border);
+  padding: 1rem;
+`;
+
+const InputWrapper = styled.div`
   display: flex;
   gap: 1rem;
-  padding: 1rem;
-  border-top: 1px solid #ddd;
+  align-items: flex-start;
 `;
 
 const TextArea = styled.textarea`
   flex: 1;
   padding: 0.75rem;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border);
   border-radius: 4px;
   resize: none;
-  font-family: inherit;
-  font-size: 1rem;
-  min-height: 40px;
-  max-height: 120px;
+  height: 2.5rem;
+  max-height: 150px;
+  transition: all 0.2s;
 
   &:focus {
     outline: none;
-    border-color: #0070f3;
+    border-color: var(--primary);
   }
 `;
 
-const Button = styled.button`
-  padding: 0.75rem 1.5rem;
-  background-color: #0070f3;
+const SendButton = styled.button`
+  background: var(--primary);
   color: white;
   border: none;
+  padding: 0.75rem 1.5rem;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background 0.2s;
 
   &:hover {
-    background-color: #0051cc;
+    background: var(--primary-dark);
   }
 
   &:disabled {
-    background-color: #ccc;
+    background: var(--border);
     cursor: not-allowed;
   }
 `;
 
-const FileInput = styled.input`
-  display: none;
-`;
-
-const FileButton = styled.button`
-  padding: 0.75rem;
-  background: none;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  &:hover {
-    background-color: #f8f9fa;
-    border-color: #0070f3;
-  }
-
-  svg {
-    width: 20px;
-    height: 20px;
-  }
-`;
-
-const SelectedFiles = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-top: 1px solid #ddd;
-
-  .file {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.25rem 0.5rem;
-    background-color: #f8f9fa;
-    border-radius: 4px;
-    font-size: 0.875rem;
-
-    button {
-      background: none;
-      border: none;
-      padding: 0;
-      cursor: pointer;
-      color: #dc3545;
-      display: flex;
-      align-items: center;
-
-      &:hover {
-        color: #bd2130;
-      }
-    }
-  }
-`;
-
 const TypingIndicator = styled.div`
-  padding: 0.5rem 1rem;
   font-size: 0.875rem;
-  color: #666;
+  color: var(--secondary);
+  padding: 0.5rem 1rem;
   font-style: italic;
 `;
 
-const MessagingInterface = ({ projectId, otherUserId, otherUserName }) => {
+const MessagingInterface = ({ projectId, receiverId, receiverName }) => {
+  const { user } = useAuth();
   const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [message, setMessage] = useState("");
   const [socket, setSocket] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]);
-  const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const messageListRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const { user } = useAuth();
 
   useEffect(() => {
-    // Initialize socket connection
-    const token = localStorage.getItem("token");
-    const newSocket = io(process.env.GATSBY_API_URL, {
-      auth: { token },
+    const newSocket = io(process.env.REACT_APP_API_URL, {
+      auth: {
+        token: localStorage.getItem("token"),
+      },
     });
 
     newSocket.on("connect", () => {
-      console.log("Socket connected");
+      console.log("Connected to socket server");
     });
 
-    newSocket.on("new-message", ({ message }) => {
-      setMessages((prev) => [...prev, message]);
+    newSocket.on("new-message", ({ message: newMessage, sender }) => {
+      setMessages((prev) => [...prev, { ...newMessage, sender }]);
+      if (messageListRef.current) {
+        messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+      }
     });
 
     newSocket.on("user-typing", ({ userId, projectId: typingProjectId }) => {
-      if (userId === otherUserId && typingProjectId === projectId) {
+      if (userId === receiverId && typingProjectId === projectId) {
         setIsTyping(true);
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000);
+        setTimeout(() => setIsTyping(false), 3000);
       }
     });
 
@@ -245,216 +141,112 @@ const MessagingInterface = ({ projectId, otherUserId, otherUserName }) => {
 
     setSocket(newSocket);
 
-    // Fetch existing messages
-    fetchMessages();
-
     return () => {
-      if (newSocket) {
-        newSocket.disconnect();
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
+      newSocket.close();
     };
-  }, [projectId, otherUserId]);
+  }, [projectId, receiverId]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const fetchMessages = async () => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await axios.get(
-        `${process.env.GATSBY_API_URL}/api/messages/conversation/${projectId}/${otherUserId}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      setMessages(response.data.data.messages);
-      setError(null);
-    } catch (err) {
-      console.error("Error fetching messages:", err);
-      setError("Failed to load messages");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  const handleMessageChange = (e) => {
-    setNewMessage(e.target.value);
-
-    // Send typing indicator
-    if (socket) {
-      socket.emit("typing", {
-        receiverId: otherUserId,
-        projectId,
-      });
-    }
-  };
-
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files);
-    setSelectedFiles((prev) => [...prev, ...files]);
-    e.target.value = null; // Reset file input
-  };
-
-  const handleFileRemove = (index) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSubmit = async () => {
-    if (!newMessage.trim() && selectedFiles.length === 0) return;
-
-    try {
-      // Upload files if any
-      let attachments = [];
-      if (selectedFiles.length > 0) {
-        const formData = new FormData();
-        selectedFiles.forEach((file) => {
-          formData.append("files", file);
-        });
-
-        const token = localStorage.getItem("token");
-        const uploadResponse = await axios.post(
-          `${process.env.GATSBY_API_URL}/api/upload`,
-          formData,
+    // Fetch existing messages
+    const fetchMessages = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.REACT_APP_API_URL}/api/messages?projectId=${projectId}&receiverId=${receiverId}`,
           {
             headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "multipart/form-data",
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
             },
           }
         );
-        attachments = uploadResponse.data.data.filenames;
+        const data = await response.json();
+        setMessages(data);
+
+        if (messageListRef.current) {
+          messageListRef.current.scrollTop =
+            messageListRef.current.scrollHeight;
+        }
+      } catch (error) {
+        console.error("Error fetching messages:", error);
       }
+    };
 
-      // Send message through socket
-      socket.emit("private-message", {
-        content: newMessage.trim(),
-        receiverId: otherUserId,
-        projectId,
-        attachments,
-      });
+    fetchMessages();
+  }, [projectId, receiverId]);
 
-      setNewMessage("");
-      setSelectedFiles([]);
-      setError(null);
-    } catch (err) {
-      console.error("Error sending message:", err);
-      setError("Failed to send message");
+  const handleSendMessage = () => {
+    if (!message.trim() || !socket) return;
+
+    socket.emit("private-message", {
+      content: message.trim(),
+      receiverId,
+      projectId,
+    });
+
+    setMessage("");
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
     }
+  };
+
+  const handleTyping = () => {
+    if (socket) {
+      socket.emit("typing", { receiverId, projectId });
+    }
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+    }, 3000);
   };
 
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
-    const now = new Date();
-    const diff = now - date;
-
-    if (diff < 24 * 60 * 60 * 1000) {
-      return date.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    }
-
-    return date.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
-
-  if (loading) {
-    return <div>Loading messages...</div>;
-  }
-
-  if (error) {
-    return <div style={{ color: "#dc3545" }}>{error}</div>;
-  }
 
   return (
     <Container>
-      <MessagesContainer>
-        {messages.map((message) => (
-          <Message key={message.id} isSender={message.senderId === user.id}>
-            <div>{message.content}</div>
-            {message.attachments?.length > 0 && (
-              <div className="attachments">
-                {message.attachments.map((filename) => (
-                  <a
-                    key={filename}
-                    href={`${process.env.GATSBY_API_URL}/uploads/${filename}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {filename.split("-").slice(1).join("-")}
-                  </a>
-                ))}
-              </div>
-            )}
-            <div className="meta">
-              <span>{formatTimestamp(message.createdAt)}</span>
-              {message.senderId === user.id && (
-                <span>{message.isRead ? "✓✓" : "✓"}</span>
-              )}
-            </div>
+      <MessageList ref={messageListRef}>
+        {messages.map((msg) => (
+          <Message key={msg.id} isSent={msg.senderId === user.id}>
+            <MessageContent isSent={msg.senderId === user.id}>
+              {msg.content}
+            </MessageContent>
+            <MessageMeta>
+              {msg.senderId === user.id ? "You" : receiverName} •{" "}
+              {formatTimestamp(msg.createdAt)}
+              {msg.senderId === user.id && msg.isRead && " • Read"}
+            </MessageMeta>
           </Message>
         ))}
-        <div ref={messagesEndRef} />
-      </MessagesContainer>
+      </MessageList>
 
       {isTyping && (
-        <TypingIndicator>{otherUserName} is typing...</TypingIndicator>
-      )}
-
-      {selectedFiles.length > 0 && (
-        <SelectedFiles>
-          {selectedFiles.map((file, index) => (
-            <div key={index} className="file">
-              <span>{file.name}</span>
-              <button onClick={() => handleFileRemove(index)}>×</button>
-            </div>
-          ))}
-        </SelectedFiles>
+        <TypingIndicator>{receiverName} is typing...</TypingIndicator>
       )}
 
       <InputContainer>
-        <FileInput
-          type="file"
-          ref={fileInputRef}
-          multiple
-          onChange={handleFileSelect}
-        />
-        <FileButton
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach files"
-        >
-          📎
-        </FileButton>
-        <TextArea
-          value={newMessage}
-          onChange={handleMessageChange}
-          placeholder="Type a message..."
-          onKeyPress={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit();
-            }
-          }}
-        />
-        <Button
-          onClick={handleSubmit}
-          disabled={!newMessage.trim() && selectedFiles.length === 0}
-        >
-          Send
-        </Button>
+        <InputWrapper>
+          <TextArea
+            value={message}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              handleTyping();
+            }}
+            onKeyPress={handleKeyPress}
+            placeholder="Type a message..."
+          />
+          <SendButton onClick={handleSendMessage} disabled={!message.trim()}>
+            Send
+          </SendButton>
+        </InputWrapper>
       </InputContainer>
     </Container>
   );
