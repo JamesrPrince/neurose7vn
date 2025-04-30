@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build directories
+dist/
+build/
+.cache/
+public/
+packages/*/dist/
+packages/*/build/
+packages/*/.cache/
+packages/*/public/
+packages/frontend/public/
+.gatsby-*/
+
+# Environment files (keep only .env.example)
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*
+!.env.example
+
+# Log files
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage and testing
+coverage/
+.nyc_output
+
+# Uploaded files
+packages/backend/uploads/*
+!packages/backend/uploads/.gitkeep
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Misc
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vercel
